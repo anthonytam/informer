@@ -41,23 +41,7 @@ logging.getLogger().setLevel(logging.INFO)
 
 class TGInformer:
 
-    def __init__(self,
-                 account_id=None,
-                 db_prod_ip=None,
-                 db_prod_port=None,
-                 db_prod_name=None,
-                 db_prod_user=None,
-                 db_prod_password=None,
-                 db_local_ip=None,
-                 db_local_port=None,
-                 db_local_name=None,
-                 db_local_user=None,
-                 db_local_password=None,
-                 tg_notifications_channel_id=None,
-                 google_credentials_path=None,
-                 google_sheet_name=None,
-                 ):
-
+    def __init__(self, account_id, config):
         # ------------------
         # Instance variables
         # ------------------
@@ -83,60 +67,43 @@ class TGInformer:
         by @paulpierre 11-26-2019
         """)
 
-        # ------------------------------------------------
-        # Check if we're in app engine and set environment
-        # ------------------------------------------------
-
-        if os.getenv('GAE_INSTANCE'):
-            self.SERVER_MODE = 'prod'  # prod vs local
-            self.MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://{}:{}@{}:{}/{}'.format(db_prod_user, db_prod_password, db_prod_ip, db_prod_port, db_prod_name)
-        else:
-            self.SERVER_MODE = 'local'
-            self.MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://{}:{}@{}:{}/{}'.format(db_local_user, db_local_password, db_local_ip, db_local_port, db_local_name)
-
-        logging.info('SERVER_MODE: {} GAE_ENV: {}'.format(self.SERVER_MODE, str(os.getenv('GAE_INSTANCE'))))
-
-        # -----------------------------------------
-        # Set the channel we want to send alerts to
-        # -----------------------------------------
-        self.monitor_channel = tg_notifications_channel_id
-
-        if not account_id:
-            logging.error('Must specify account_id for bot instance')
-            return
-
-        # -----------------------
-        # Initialize Google Sheet
-        # -----------------------
-        scope = [
-            'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_name(google_credentials_path, scope)
-
-        self.gsheet = gspread.authorize(creds)
-        self.sheet = self.gsheet.open(google_sheet_name).sheet1
-
         # -------------------
         # Initialize database
         # -------------------
-        self.engine = db.create_engine(self.MYSQL_CONNECTOR_STRING)  # , echo=True
+        self.MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://{}:{}@{}:{}/{}'.format(config["database"]["sql"]["username"],
+                                                                                     config["database"]["sql"]["password"],
+                                                                                     config["database"]["sql"]["hostname"],
+                                                                                     config["database"]["sql"]["port"],
+                                                                                     config["database"]["sql"]["database"])
+        self.engine = db.create_engine(self.MYSQL_CONNECTOR_STRING)
         self.Session = sessionmaker(bind=self.engine)
         self.session = self.Session()
 
-        # --------------------
-        # Load account from DB
-        # --------------------
-        self.tg_user = None
         try:
             self.account = self.session.query(Account).filter_by(account_id=account_id).first()
         except ProgrammingError as e:
             logging.error('Database is not set up, setting it up')
-            build_database.initialize_db()
+            build_database.initialize_db(config)
             self.account = self.session.query(Account).filter_by(account_id=account_id).first()
 
         if not self.account:
             logging.error('Invalid account_id {} for bot instance'.format(account_id))
             sys.exit(0)
+
+        # -----------------------
+        # Initialize Google Sheet
+        # -----------------------
+        scope = [ 'https://www.googleapis.com/auth/spreadsheets',
+                  'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_name(config["notification"]["google_sheets"]["credentials_path"], scope)
+
+        self.gsheet = gspread.authorize(creds)
+        self.sheet = self.gsheet.open(config["notification"]["google_sheets"]["sheet_name"]).sheet1
+
+        # -----------------------------------------
+        # Set the channel we want to send alerts to
+        # -----------------------------------------
+        self.monitor_channel = config["notification"]["telegram"]["channel_id"]
 
         # ----------------------
         # Telegram service login
@@ -149,6 +116,7 @@ class TGInformer:
         # Authorize from terminal
         # -----------------------
         # TODO: automate authcode with the Burner API
+        self.tg_user = None
         self.client.connect()
         if not self.client.is_user_authorized():
             logging.info('Client is currently not logged in, please sign in!')
@@ -206,6 +174,7 @@ class TGInformer:
             return False
         except FloodWaitError as e:
             logging.info('{}: Got a flood wait error for: {}'.format(sys._getframe().f_code.co_name, url))
+            # TODO: Doesn't this crash?
             await asyncio.sleep(e.seconds * 2)
 
         return {
@@ -247,7 +216,7 @@ class TGInformer:
                 'name': keyword.keyword_description,
                 'regex': keyword.keyword_regex
             })
-            logging.info('{}: Monitoring keywords: {}'.format(sys._getframe().f_code.co_name, json.dumps(self.keyword_list, indent=4)))
+        logging.info('{}: Monitoring keywords: {}'.format(sys._getframe().f_code.co_name, json.dumps(self.keyword_list, indent=4)))
 
     # ===========================
     # Initialize channels to join

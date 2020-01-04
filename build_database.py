@@ -12,6 +12,7 @@ Session = None
 session = None
 SERVER_MODE = None
 engine = None
+Config = None
 
 """
 This script will build our your database for you
@@ -43,32 +44,28 @@ def init_data():
     session.close()
 
 def init_add_account():
-    global session, SERVER_MODE, engine
+    global session, SERVER_MODE, engine, Config
     logging.info('{}: Adding bot account'.format(sys._getframe().f_code.co_name))
 
     BOT_ACCOUNTS = [
-
         Account(
-            account_id=1234567,  # Insert your own Telegram API ID here
-            account_api_id=1234567,  # Insert your own Telegram API ID here
-            account_api_hash='21b277e0daa5911b0f2616b8b669533c',  # Insert your own Telegram API Hash here
+            account_id=Config["initial"]["account"]["id"],
+            account_api_id=Config["initial"]["account"]["api_id"],
+            account_api_hash=Config["initial"]["account"]["api_hash"],
             account_is_bot=False,
             account_is_verified=False,
             account_is_restricted=False,
-            account_first_name='Darrin',
-            account_last_name='OBrien',
-            account_user_name='informer',
-            account_phone='+14151234567',  # Enter your burner phone number here
+            account_first_name=Config["initial"]["account"]["first_name"],
+            account_last_name=Config["initial"]["account"]["last_name"],
+            account_user_name=Config["initial"]["account"]["username"],
+            account_phone=Config["initial"]["account"]["phone"],
             account_is_enabled=True,
             account_tlogin=datetime.now(),
             account_tcreate=datetime.now(),
-            account_tmodified=datetime.now()),
-
+            account_tmodified=datetime.now())
     ]
-
     for account in BOT_ACCOUNTS:
         session.add(account)
-
     session.commit()
 
 def init_add_channels():
@@ -77,18 +74,17 @@ def init_add_channels():
     # Lets get the first account
     account = session.query(Account).first()
 
-    CHANNELS = [
-        {
-            'channel_name': 'Informer monitoring',
-            'channel_id': 1234567,  # Enter your own Telegram channel ID for monitoring here
-            'channel_url': 'https://t.me/joinchat/Blahblahblah',
-            'channel_is_private': True
-        },
-
-    ]
+    CHANNELS = []
+    if Config["initial"]["channel"]["use_initial"]:
+        CHANNELS.append({
+            'channel_name': Config["initial"]["channel"]["name"],
+            'channel_id': Config["initial"]["channel"]["id"],
+            'channel_url': Config["initial"]["channel"]["url"],
+            'channel_is_private': Config["initial"]["channel"]["is_private"]
+        })
 
     # Lets import the CSV with the channel list
-    with open('channels.csv') as csv_file:
+    with open('initial/channels.csv') as csv_file:
         csv_reader = csv.reader(csv_file, delimiter=',')
         line_count = 0
         for row in csv_reader:
@@ -119,6 +115,7 @@ def init_add_channels():
             channel_is_group=channel_is_group,
             channel_is_private=channel_is_private
         ))
+
     session.commit()
 
 # ==============================
@@ -126,37 +123,10 @@ def init_add_channels():
 # ==============================
 def init_add_keywords():
     global session, SERVER_MODE, engine
-    KEYWORDS = [
-        {
-            'keyword_description': 'Binance',
-            'keyword_regex': '(binance|bnb)'
-        },
-        {
-            'keyword_description': 'Huobi',
-            'keyword_regex': '(huobi)'
-        },
-        {
-            'keyword_description': 'Bittrex',
-            'keyword_regex': '(bittrex)'
-        },
-        {
-            'keyword_description': 'Bitfinex',
-            'keyword_regex': '(bitfinex)'
-        },
-        {
-            'keyword_description': 'Coinbase',
-            'keyword_regex': '(coinbase)'
-        },
-        {
-            'keyword_description': 'Kraken',
-            'keyword_regex': '(kraken)'
-        },
-        {
-            'keyword_description': 'Poloniex',
-            'keyword_regex': '(poloniex)'
-        },
 
-    ]
+    # TODO: Add keywords from csv
+
+    KEYWORDS = []
 
     for keyword in KEYWORDS:
         logging.info('{}: Adding keyword {} to the database'.format(sys._getframe().f_code.co_name, keyword['keyword_description']))
@@ -197,33 +167,28 @@ def init_add_monitors():
     session.commit()
 
 
-def initialize_db():
-    global session, SERVER_MODE, engine, Session
-    DATABASE_NAME = 'informer_db'
+def initialize_db(config):
+    global session, SERVER_MODE, engine, Session, Config
+    Config = config
 
-    # NOTE: you will have to manually add your own DB string connector below
-
-    if os.getenv('GAE_INSTANCE'):
-        SERVER_MODE = 'prod'  # prod vs local
-        MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://root:root@YOUR_OWN_IP_HERE:3320/{}'.format(DATABASE_NAME)
-    else:
-        SERVER_MODE = 'local'
-        MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://root:root@127.0.0.1:3320/{}'.format(DATABASE_NAME)
+    MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://{}:{}@{}:{}'.format(config["database"]["sql"]["username"],
+                                                                         config["database"]["sql"]["password"],
+                                                                         config["database"]["sql"]["hostname"],
+                                                                         config["database"]["sql"]["port"])
 
     engine = db.create_engine(MYSQL_CONNECTOR_STRING)#, echo=True)
     Session = sessionmaker(bind=engine)
-    session = None
     session = Session()
-    session.execute("CREATE DATABASE {} CHARACTER SET 'utf8' COLLATE 'utf8_unicode_ci';".format(DATABASE_NAME))
+    session.execute("CREATE DATABASE {} CHARACTER SET 'utf8' COLLATE 'utf8_unicode_ci';".format(config["database"]["sql"]["database"]))
     session.close()
-    engine = db.create_engine('{}/{}?charset=utf8mb4'.format(MYSQL_CONNECTOR_STRING, DATABASE_NAME))  # , echo=True) # uncomment right most comment if you want to hear all the noise MySQL is making
+    engine = db.create_engine('{}/{}?charset=utf8mb4'.format(MYSQL_CONNECTOR_STRING, config["database"]["sql"]["database"]))
     Session = sessionmaker(bind=engine)
     session = None
     session = Session()
 
     # A hack to support unicode for emojis
     session.execute('SET NAMES "utf8mb4" COLLATE "utf8mb4_unicode_ci"')
-    session.execute('ALTER DATABASE {} CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;'.format(DATABASE_NAME))
+    session.execute('ALTER DATABASE {} CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;'.format(config["database"]["sql"]["database"]))
     session.execute('commit')
 
     init_db()
