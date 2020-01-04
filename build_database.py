@@ -1,32 +1,27 @@
-from models import Account, Channel, ChatUser, Keyword, Message, Monitor, Notification
+from models import Account, Channel, ChatUser, Keyword, Message, Notification
 import sqlalchemy as db
 import csv
 from datetime import datetime
 import sys
 import os
 import logging
+import yaml
 from sqlalchemy.orm import sessionmaker
 logging.getLogger().setLevel(logging.INFO)
 
 Session = None
 session = None
-SERVER_MODE = None
 engine = None
 Config = None
 
-"""
-This script will build our your database for you
-"""
-
 def init_db():
-    global session, SERVER_MODE, engine
+    global session, engine
     logging.info('{}: Initializing the database'.format(sys._getframe().f_code.co_name))
     Account.metadata.create_all(engine)
     ChatUser.metadata.create_all(engine)
     Channel.metadata.create_all(engine)
     Message.metadata.create_all(engine)
     Keyword.metadata.create_all(engine)
-    Monitor.metadata.create_all(engine)
     Notification.metadata.create_all(engine)
     session.close()
 
@@ -35,16 +30,15 @@ def init_db():
     Lets setup the channels to monitor in the database
 """
 def init_data():
-    global session, SERVER_MODE, engine
+    global session, engine
     session = Session()
     init_add_account()
     init_add_channels()
     init_add_keywords()
-    init_add_monitors()
     session.close()
 
 def init_add_account():
-    global session, SERVER_MODE, engine, Config
+    global session, engine, Config
     logging.info('{}: Adding bot account'.format(sys._getframe().f_code.co_name))
 
     BOT_ACCOUNTS = [
@@ -69,7 +63,7 @@ def init_add_account():
     session.commit()
 
 def init_add_channels():
-    global session, SERVER_MODE, engine
+    global session, engine
 
     # Lets get the first account
     account = session.query(Account).first()
@@ -122,11 +116,24 @@ def init_add_channels():
 # The keywords we want to spy on
 # ==============================
 def init_add_keywords():
-    global session, SERVER_MODE, engine
-
-    # TODO: Add keywords from csv
+    global session, engine
 
     KEYWORDS = []
+
+    # Lets import the CSV with the keywork list
+    with open('initial/keywords.csv') as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=',')
+        line_count = 0
+        for row in csv_reader:
+            if line_count != 0:
+                print(f'Adding keyword {row[0]} => {row[1]}')
+                KEYWORDS.append({
+                    'keyword_description': row[0],
+                    'keyword_regex': row[1]
+                                 })
+            line_count += 1
+
+        logging.info('Inserted {} keywords to database'.format(line_count))
 
     for keyword in KEYWORDS:
         logging.info('{}: Adding keyword {} to the database'.format(sys._getframe().f_code.co_name, keyword['keyword_description']))
@@ -139,36 +146,8 @@ def init_add_keywords():
         ))
     session.commit()
 
-
-# ======================================
-# Lets add the channels we want to watch
-# ======================================
-def init_add_monitors():
-    global session, SERVER_MODE, engine
-    # Lets assign them all
-    accounts = session.query(Account).all()
-    channels = session.query(Channel).all()
-    account_index = 0
-    channel_count = 0
-
-    for channel in channels:
-        account = accounts[account_index]
-        logging.info('{}: Adding monitoring to channel {} with account_id {} to the database'.format(sys._getframe().f_code.co_name, channel.channel_name, account.account_id))
-        session.add(Monitor(
-            channel_id=channel.id,
-            account_id=account.account_id,
-            monitor_tcreate=datetime.now(),
-            monitor_tmodified=datetime.now()
-        ))
-        channel_count += 1
-        if channel_count > 500:
-            account_index += 1
-            channel_count = 0
-    session.commit()
-
-
 def initialize_db(config):
-    global session, SERVER_MODE, engine, Session, Config
+    global session, engine, Session, Config
     Config = config
 
     MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://{}:{}@{}:{}'.format(config["database"]["sql"]["username"],
@@ -196,4 +175,7 @@ def initialize_db(config):
 
 
 if __name__ == '__main__':
-    initialize_db()
+    config = None
+    with open("config.yaml", "r") as conf_file:
+        config = yaml.load(conf_file, Loader=yaml.FullLoader)
+    initialize_db(config)

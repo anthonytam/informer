@@ -119,20 +119,6 @@ class Message(Base):
     channel = relationship('Channel', back_populates='messages')
     notifications = relationship('Notification')
 
-
-class Monitor(Base):
-    """
-    Channels to join and monitor
-    """
-    __tablename__ = 'monitor'
-    monitor_id = Column(Integer, primary_key=True, index=True)
-    channel_id = Column(Integer, ForeignKey('channel.id'), nullable=False)
-    account_id = Column(Integer, ForeignKey('account.account_id'), nullable=False)  # The account ID (bot)
-    monitor_tcreate = Column(DateTime, default=datetime.now())
-    monitor_tmodified = Column(DateTime, default=datetime.now())
-    channel = relationship('Channel')
-
-
 class Notification(Base):
     """
     A log of notifications of keywords detected

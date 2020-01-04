@@ -1,4 +1,4 @@
-from models import Account, Channel, ChatUser, Keyword, Message, Monitor, Notification
+from models import Account, Channel, ChatUser, Keyword, Message, Notification
 import sqlalchemy as db
 from datetime import datetime, timedelta
 from random import randrange
@@ -67,9 +67,7 @@ class TGInformer:
         by @paulpierre 11-26-2019
         """)
 
-        # -------------------
         # Initialize database
-        # -------------------
         self.MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://{}:{}@{}:{}/{}'.format(config["database"]["sql"]["username"],
                                                                                      config["database"]["sql"]["password"],
                                                                                      config["database"]["sql"]["hostname"],
@@ -81,7 +79,7 @@ class TGInformer:
 
         try:
             self.account = self.session.query(Account).filter_by(account_id=account_id).first()
-        except ProgrammingError as e:
+        except ProgrammingError:
             logging.error('Database is not set up, setting it up')
             build_database.initialize_db(config)
             self.account = self.session.query(Account).filter_by(account_id=account_id).first()
@@ -90,31 +88,32 @@ class TGInformer:
             logging.error('Invalid account_id {} for bot instance'.format(account_id))
             sys.exit(0)
 
-        # -----------------------
+        # Notification Methods
+        self.telegram_enabled = config["notification"]["telegram"]["enabled"]
+        self.g_enabled = config["notification"]["google_sheets"]["enabled"]
+        self.sql_enabled = config["notification"]["sql"]["enabled"]
+        self.elastic_enabled = config["notification"]["elastic_search"]["enabled"]
+        self.json_enabled = config["notification"]["json"]["enabled"]
+
         # Initialize Google Sheet
-        # -----------------------
         scope = [ 'https://www.googleapis.com/auth/spreadsheets',
                   'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_name(config["notification"]["google_sheets"]["credentials_path"], scope)
 
-        self.gsheet = gspread.authorize(creds)
-        self.sheet = self.gsheet.open(config["notification"]["google_sheets"]["sheet_name"]).sheet1
+        if self.g_enabled:
+            self.gsheet = gspread.authorize(creds)
+            self.sheet = self.gsheet.open(config["notification"]["google_sheets"]["sheet_name"]).sheet1
+        else:
+            self.gsheet = None
+            self.sheet = None
 
-        # -----------------------------------------
         # Set the channel we want to send alerts to
-        # -----------------------------------------
         self.monitor_channel = config["notification"]["telegram"]["channel_id"]
 
-        # ----------------------
         # Telegram service login
-        # ----------------------
         logging.info('Logging in with account # {}'.format(self.account.account_phone))
         session_file = 'session/' + self.account.account_phone.replace('+', '')
         self.client = TelegramClient(session_file, self.account.account_api_id, self.account.account_api_hash)
-
-        # -----------------------
-        # Authorize from terminal
-        # -----------------------
         # TODO: automate authcode with the Burner API
         self.tg_user = None
         self.client.connect()
@@ -164,9 +163,7 @@ class TGInformer:
         logging.info('{}: Getting channel info with url: {}'.format(sys._getframe().f_code.co_name, url))
         channel_hash = utils.parse_username(url)[0]
 
-        # -----------------------------------------
         # Test if we can get entity by channel hash
-        # -----------------------------------------
         try:
             channel = await self.client.get_entity(channel_hash)
         except ValueError:
@@ -223,9 +220,7 @@ class TGInformer:
     # ===========================
     async def init_monitor_channels(self):
 
-        # ---------------------
         # Let's start listening
-        # ---------------------
         @self.client.on(events.NewMessage)
         async def message_event_handler(event):
             await self.filter_message(event)
@@ -251,45 +246,37 @@ class TGInformer:
 
         logging.info('{}: ### Current channels {}'.format(sys._getframe().f_code.co_name, json.dumps(current_channels)))
 
-        # -----------------------------------
         # Get the list of channels to monitor
-        # -----------------------------------
         self.session = self.Session()
-        account = self.session.query(Account).first()
-        monitors = self.session.query(Monitor).filter_by(account_id=account.account_id).all()
+        channels_for_account = self.session.query(Channel).filter_by(account_id=self.account.account_id).all()
 
         channels_to_monitor = []
-        for monitor in monitors:
+        for monitor in channels_for_account:
             channel_data = {
-                'channel_id': monitor.channel.channel_id,
-                'channel_name': monitor.channel.channel_name,
-                'channel_title': monitor.channel.channel_title,
-                'channel_url': monitor.channel.channel_url,
-                'account_id': monitor.channel.account_id,
-                'channel_is_megagroup': monitor.channel.channel_is_mega_group,
-                'channel_is_group': monitor.channel.channel_is_group,
-                'channel_is_private': monitor.channel.channel_is_private,
-                'channel_is_broadcast': monitor.channel.channel_is_broadcast,
-                'channel_access_hash': monitor.channel.channel_access_hash,
-                'channel_size': monitor.channel.channel_size,
-                'channel_is_enabled': monitor.channel.channel_is_enabled,
-                'channel_tcreate': monitor.channel.channel_tcreate
+                'channel_id': monitor.channel_id,
+                'channel_name': monitor.channel_name,
+                'channel_title': monitor.channel_title,
+                'channel_url': monitor.channel_url,
+                'account_id': monitor.account_id,
+                'channel_is_megagroup': monitor.channel_is_mega_group,
+                'channel_is_group': monitor.channel_is_group,
+                'channel_is_private': monitor.channel_is_private,
+                'channel_is_broadcast': monitor.channel_is_broadcast,
+                'channel_access_hash': monitor.channel_access_hash,
+                'channel_size': monitor.channel_size,
+                'channel_is_enabled': monitor.channel_is_enabled,
+                'channel_tcreate': monitor.channel_tcreate
             }
 
-            if monitor.channel.channel_is_enabled is True:
+            if monitor.channel_is_enabled is True:
                 channels_to_monitor.append(channel_data)
         self.session.close()
 
-        # -------------------------------
-        # Iterate through channel objects
-        # -------------------------------
         for channel in channels_to_monitor:
             self.session = self.Session()
             channel_obj = self.session.query(Channel).filter_by(channel_id=channel['channel_id']).first()
 
-            # -------------------------------
-            # We have sufficient channel data
-            # -------------------------------
+            # Is the channel populated
             if channel['channel_id']:
                 self.channel_list.append(channel['channel_id'])
                 logging.info('Adding channel {} to monitoring w/ ID: {} hash: {}'.format(channel['channel_name'], channel['channel_id'], channel['channel_access_hash']))
@@ -301,30 +288,20 @@ class TGInformer:
                     'channel_size': 0,
                     'channel_texpire': datetime.now() + timedelta(hours=3)
                 }
-
             else:
-                # ------------------------
-                # If not grab channel data
-                # ------------------------
                 if channel['channel_url'] and '/joinchat/' not in channel['channel_url']:
                     o = await self.get_channel_info_by_url(channel['channel_url'])
-
-                    # -----------------------------
-                    # If channel is invalid, ignore
-                    # -----------------------------
                     if o is False:
                         logging.error('Invalid channel URL: {}'.format(channel['channel_url']))
+                        # TODO: Remove it from the channel DB, or disable it
                         continue
                     logging.info('{}: ### Successfully identified {}'.format(sys._getframe().f_code.co_name, channel['channel_name']))
-
-                # -------------------------
-                # If the channel is a group
-                # -------------------------
                 elif channel['channel_is_group']:
                     o = await self.get_channel_info_by_group_id(channel['channel_id'])
                     logging.info('{}: ### Successfully identified {}'.format(sys._getframe().f_code.co_name, channel['channel_name']))
                 else:
                     logging.info('{}: Unable to indentify channel {}'.format(sys._getframe().f_code.co_name, channel['channel_name']))
+                    # TODO: Remove it form the channel DB, or disable it
                     continue
 
                 channel_obj.channel_id = o['channel_id']
@@ -332,8 +309,6 @@ class TGInformer:
                 channel_obj.channel_is_broadcast = o['is_broadcast']
                 channel_obj.channel_is_mega_group = o['is_mega_group']
                 channel_obj.channel_access_hash = o['channel_access_hash']
-
-
                 self.channel_meta[o['channel_id']] = {
                     'channel_id': o['channel_id'],
                     'channel_title': o['channel_title'],
@@ -342,17 +317,9 @@ class TGInformer:
                     'channel_texpire':datetime.now() + timedelta(hours=3)
                 }
 
-
-            # -------------------------------
-            # Determine is channel is private
-            # -------------------------------
             channel_is_private = True if (channel['channel_is_private'] or '/joinchat/' in channel['channel_url']) else False
-            if channel_is_private:
-                logging.info('channel_is_private: {}'.format(channel_is_private))
-
-            # ------------------------------------------
+            # TODO: Make this a function
             # Join if public channel and we're not in it
-            # ------------------------------------------
             if channel['channel_is_group'] is False and channel_is_private is False and channel['channel_id'] not in current_channels:
                 logging.info('{}: Joining channel: {} => {}'.format(sys._getframe().f_code.co_name, channel['channel_id'], channel['channel_name']))
                 try:
@@ -362,31 +329,19 @@ class TGInformer:
                     await asyncio.sleep(sec)
                 except FloodWaitError as e:
                     logging.info('Received FloodWaitError, waiting for {} seconds..'.format(e.seconds))
-                    # Lets wait twice as long as the API tells us for posterity
                     await asyncio.sleep(e.seconds * 2)
-
                 except ChannelPrivateError as e:
                     logging.info('Channel is private or we were banned bc we didnt respond to bot')
                     channel['channel_is_enabled'] = False
 
-            # ------------------------------------------
             # Join if private channel and we're not in it
-            # ------------------------------------------
             elif channel_is_private and channel['channel_id'] not in current_channels:
                 channel_obj.channel_is_private = True
                 logging.info('{}: Joining private channel: {} => {}'.format(sys._getframe().f_code.co_name, channel['channel_id'], channel['channel_name']))
-
-                # -------------------------------------
                 # Join private channel with secret hash
-                # -------------------------------------
                 channel_hash = channel['channel_url'].replace('https://t.me/joinchat/', '')
-
                 try:
                     await self.client(ImportChatInviteRequest(hash=channel_hash))
-
-                    # ----------------------
-                    # Counter FloodWaitError
-                    # ----------------------
                     sec = randrange(self.MIN_CHANNEL_JOIN_WAIT, self.MAX_CHANNEL_JOIN_WAIT)
                     logging.info('sleeping for {} seconds'.format(sec))
                     await asyncio.sleep(sec)
@@ -401,9 +356,6 @@ class TGInformer:
                     self.session.close()
                     continue
 
-            # ---------------------------------
-            # Rollback session if we get a dupe
-            # ---------------------------------
             try:
                 self.session.commit()
             except IntegrityError:
@@ -435,19 +387,15 @@ class TGInformer:
 
         message = event.raw_text
 
-        # Lets check to see if the message comes from our channel list
         if channel_id in self.channel_list:
-
-            # Lets iterate through our keywords to monitor list
-            for keyword in self.keyword_list:
-
-                # If it matches the regex then voila!
-                if re.search(keyword['regex'], message, re.IGNORECASE):
-                    logging.info(
-                        'Filtering: {}\n\nEvent raw text: {} \n\n Data: {}'.format(channel_id, event.raw_text, event))
-
-                    # Lets send the notification with all the pertinent information in the params
-                    await self.send_notification(message_obj=event.message, event=event, sender_id=event.sender_id, channel_id=channel_id, keyword=keyword['name'], keyword_id=keyword['id'])
+            if len(self.keyword_list) != 0:
+                for keyword in self.keyword_list:
+                    if re.search(keyword['regex'], message, re.IGNORECASE):
+                        logging.info(
+                            'Filtering: {}\n\nEvent raw text: {} \n\n Data: {}'.format(channel_id, event.raw_text, event))
+                        await self.send_notification(message_obj=event.message, event=event, sender_id=event.sender_id, channel_id=channel_id, keyword=keyword['name'], keyword_id=keyword['id'])
+            else:
+                await self.send_notification(message_obj=event.message, event=event, sender_id=event.sender_id, channel_id=channel_id)
 
     # ====================
     # Handle notifications
@@ -489,101 +437,94 @@ class TGInformer:
         channel_id = abs(channel_id)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Set the message for the notification we're about to send in our monitor channel
-        message = '⚠️ "{}" mentioned by {} in => "{}" url: {}\n\n Message:\n"{}\ntimestamp: {}'.format(keyword, sender_username, self.channel_meta[channel_id]['channel_title'], self.channel_meta[channel_id]['channel_url'], message_text,timestamp)
-        logging.info('{} Sending notification {}'.format(sys._getframe().f_code.co_name, message))
+        if self.telegram_enabled:
+            # Set the message for the notification we're about to send in our monitor channel
+            message = '⚠️ "{}" mentioned by {} in => "{}" url: {}\n\n Message:\n"{}\ntimestamp: {}'.format(keyword, sender_username, self.channel_meta[channel_id]['channel_title'], self.channel_meta[channel_id]['channel_url'], message_text,timestamp)
+            logging.info('{} Sending notification {}'.format(sys._getframe().f_code.co_name, message))
+            await self.client.send_message(self.monitor_channel, message)
 
-        # ----------------
-        # Send the message
-        # ----------------
-        await self.client.send_message(self.monitor_channel, message)
+        if self.g_enabled:
+            self.sheet.append_row([
+                sender_id,
+                sender_username,
+                channel_id,
+                self.channel_meta[channel_id]['channel_title'],
+                self.channel_meta[channel_id]['channel_url'],
+                keyword,
+                message_text,
+                is_mention,
+                is_scheduled,
+                is_fwd,
+                is_reply,
+                is_bot,
+                is_channel,
+                is_group,
+                is_private,
+                channel_size,
+                timestamp
+            ])
 
-        # -------------------------
-        # Write to the Google Sheet
-        # -------------------------
-        self.sheet.append_row([
-            sender_id,
-            sender_username,
-            channel_id,
-            self.channel_meta[channel_id]['channel_title'],
-            self.channel_meta[channel_id]['channel_url'],
-            keyword,
-            message_text,
-            is_mention,
-            is_scheduled,
-            is_fwd,
-            is_reply,
-            is_bot,
-            is_channel,
-            is_group,
-            is_private,
-            channel_size,
-            timestamp
-        ])
+        if self.sql_enabled:
+            o = await self.get_user_by_id(sender_id)
 
-        # --------------
-        # Add user to DB
-        # --------------
-        o = await self.get_user_by_id(sender_id)
+            self.session = self.Session()
+            if not bool(self.session.query(ChatUser).filter_by(chat_user_id=sender_id).all()):
 
-        self.session = self.Session()
-        if not bool(self.session.query(ChatUser).filter_by(chat_user_id=sender_id).all()):
+                self.session.add(ChatUser(
+                    chat_user_id=sender_id,
+                    chat_user_is_bot=o['is_bot'],
+                    chat_user_is_verified=o['is_verified'],
+                    chat_user_is_restricted=o['is_restricted'],
+                    chat_user_first_name=o['first_name'],
+                    chat_user_last_name=o['last_name'],
+                    chat_user_name=o['username'],
+                    chat_user_phone=o['phone'],
+                    chat_user_tlogin=datetime.now(),
+                    chat_user_tmodified=datetime.now()
+                ))
 
-            self.session.add(ChatUser(
+            # Add message
+            msg = Message(
                 chat_user_id=sender_id,
-                chat_user_is_bot=o['is_bot'],
-                chat_user_is_verified=o['is_verified'],
-                chat_user_is_restricted=o['is_restricted'],
-                chat_user_first_name=o['first_name'],
-                chat_user_last_name=o['last_name'],
-                chat_user_name=o['username'],
-                chat_user_phone=o['phone'],
-                chat_user_tlogin=datetime.now(),
-                chat_user_tmodified=datetime.now()
+                account_id=self.account.account_id,
+                channel_id=channel_id,
+                keyword_id=keyword_id,
+                message_text=message_text,
+                message_is_mention=is_mention,
+                message_is_scheduled=is_scheduled,
+                message_is_fwd=is_fwd,
+                message_is_reply=is_reply,
+                message_is_bot=is_bot,
+                message_is_group=is_group,
+                message_is_private=is_private,
+                message_is_channel=is_channel,
+                message_channel_size=channel_size,
+                message_tcreate=datetime.now()
+            )
+            self.session.add(msg)
+
+            self.session.flush()
+
+            message_id = msg.message_id
+
+            self.session.add(Notification(
+                keyword_id=keyword_id,
+                message_id=message_id,
+                channel_id=channel_id,
+                account_id=self.account.account_id,
+                chat_user_id=sender_id
             ))
 
-        # -----------
-        # Add message
-        # -----------
-        msg = Message(
-            chat_user_id=sender_id,
-            account_id=self.account.account_id,
-            channel_id=channel_id,
-            keyword_id=keyword_id,
-            message_text=message_text,
-            message_is_mention=is_mention,
-            message_is_scheduled=is_scheduled,
-            message_is_fwd=is_fwd,
-            message_is_reply=is_reply,
-            message_is_bot=is_bot,
-            message_is_group=is_group,
-            message_is_private=is_private,
-            message_is_channel=is_channel,
-            message_channel_size=channel_size,
-            message_tcreate=datetime.now()
-        )
-        self.session.add(msg)
+            # -----------
+            # Write to DB
+            # -----------
+            try:
+                self.session.commit()
+            except IntegrityError:
+                pass
+            self.session.close()
 
-        self.session.flush()
-
-        message_id = msg.message_id
-
-        self.session.add(Notification(
-            keyword_id=keyword_id,
-            message_id=message_id,
-            channel_id=channel_id,
-            account_id=self.account.account_id,
-            chat_user_id=sender_id
-        ))
-
-        # -----------
-        # Write to DB
-        # -----------
-        try:
-            self.session.commit()
-        except IntegrityError:
-            pass
-        self.session.close()
+        # TODO: Add json and Elastic search outputs
 
 
     async def update_keyword_list(self):
