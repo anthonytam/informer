@@ -167,7 +167,7 @@ def initialize_db(config):
 
     # A hack to support unicode for emojis
     session.execute('SET NAMES "utf8mb4" COLLATE "utf8mb4_unicode_ci"')
-    session.execute('ALTER DATABASE {} CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;'.format(config["database"]["sql"]["database"]))
+    session.execute('ALTER TABLE {} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin'.format(config["database"]["sql"]["database"]))
     session.execute('commit')
 
     init_db()
