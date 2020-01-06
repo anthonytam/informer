@@ -226,7 +226,7 @@ class TGInformer:
     # Check for invite links in the channel
     # =====================================
     async def check_for_channels(self, message_text, forward_from):
-        private_channels = re.findall(r"https:\/\/t.me\/joinchat\/([a-zA-z0-9]|.*)+", message_text)
+        private_channels = re.findall(r"https:\/\/t.me\/joinchat\/.+", message_text)
         for url in private_channels:
             if len(self.channel_list) != 500:
                 logging.info("{}: Attempting to join private channel: {}".format(sys._getframe().f_code.co_name, url))
@@ -234,7 +234,7 @@ class TGInformer:
             else:
                 # TODO: handle adding multiple accounts
                 pass
-        groups = re.findall(r"https:\/\/t.me\/([a-zA-z0-9]|.*)+", message_text)
+        groups = re.findall(r"https:\/\/t.me\/.+", message_text)
         for url in groups:
             if url in private_channels:
                 continue
@@ -244,9 +244,9 @@ class TGInformer:
             else:
                 # TODO: handle adding multiple accounts
                 pass
-        if forward_from:
-            logging.info("{}: Attempting to join group from forward: {}".format(sys._getframe().f_code.co_name, forward_from.channel_id))
-            await self.join_group(forward_from.channel_id)
+        # if forward_from:
+        #     logging.info("{}: Attempting to join group from forward: {}".format(sys._getframe().f_code.co_name, forward_from.channel_id))
+        #     await self.join_group(forward_from.channel_id)
     
     async def join_group(self, url):
         try:
