@@ -3,5 +3,5 @@ __pycache__
 venv-dev
 venv
 
-session
+session/*.session
 config.yaml

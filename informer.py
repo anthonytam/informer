@@ -123,8 +123,33 @@ class TGInformer:
         await self.client.connect()
         if not await self.client.is_user_authorized():
             logging.info('Client is currently not logged in, please sign in!')
-            self.client.send_code_request(self.account.account_phone)
-            self.tg_user = self.client.sign_in(self.account.account_phone, input('Enter code: '))
+            await self.client.send_code_request(self.account.account_phone)
+            self.tg_user = await self.client.sign_in(self.account.account_phone, input('Enter code: '))
+
+    def _add_channel_to_database(self, channel, url):
+        self.session = self.Session()
+        self.session.add(Channel(
+            channel_id = channel.id,
+            channel_name = channel.title,
+            channel_title = channel.title,
+            channel_url = url,
+            account_id = self.account.account_id,
+            channel_is_mega_group = channel.megagroup,
+            channel_is_group = True,
+            channel_is_private = channel.restricted,
+            channel_is_broadcast = channel.broadcast,
+            channel_access_hash = channel.access_hash,
+            channel_size = 0,
+            channel_is_enabled = True,
+            channel_tcreate = datetime.now(),
+        ))
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+        except InterfaceError:
+            pass
+        self.session.close()
 
     # =============
     # Get all users
@@ -250,24 +275,8 @@ class TGInformer:
     
     async def join_group(self, url):
         try:
-            await self.client(JoinChannelRequest(channel=await self.client.get_entity(url)))
-            sec = randrange(self.MIN_CHANNEL_JOIN_WAIT, self.MAX_CHANNEL_JOIN_WAIT)
-            logging.info('sleeping for {} seconds'.format(sec))
-            await asyncio.sleep(sec)
-        except FloodWaitError as e:
-            logging.info('Received FloodWaitError, waiting for {} seconds..'.format(e.seconds))
-            await asyncio.sleep(e.seconds * 2)
-        except ChannelPrivateError as e:
-            logging.info('Channel is private or we were banned bc we didnt respond to bot')
-        except InviteHashInvalidError:
-            logging.info('Failed to join an invalid chat link')
-        except InviteHashEmptyError:
-            logging.info('The invite hash was empty')
-
-    async def join_private_channel(self, url):
-        channel_hash = url.replace('https://t.me/joinchat/', '')
-        try:
-            await self.client(ImportChatInviteRequest(hash=channel_hash))
+            result = await self.client(JoinChannelRequest(channel=await self.client.get_entity(url)))
+            self._add_channel_to_database(result.chats[0], url)
             sec = randrange(self.MIN_CHANNEL_JOIN_WAIT, self.MAX_CHANNEL_JOIN_WAIT)
             logging.info('sleeping for {} seconds'.format(sec))
             await asyncio.sleep(sec)
@@ -282,6 +291,30 @@ class TGInformer:
             logging.info('Failed to join an invalid chat link')
         except InviteHashEmptyError:
             logging.info('The invite hash was empty')
+        except ValueError:
+            logging.info('The channel could not be found')
+
+    async def join_private_channel(self, url):
+        channel_hash = url.replace('https://t.me/joinchat/', '')
+        try:
+            result = await self.client(ImportChatInviteRequest(hash=channel_hash))
+            self._add_channel_to_database(result.chats[0], url)
+            sec = randrange(self.MIN_CHANNEL_JOIN_WAIT, self.MAX_CHANNEL_JOIN_WAIT)
+            logging.info('sleeping for {} seconds'.format(sec))
+            await asyncio.sleep(sec)
+        except FloodWaitError as e:
+            logging.info('Received FloodWaitError, waiting for {} seconds..'.format(e.seconds))
+            await asyncio.sleep(e.seconds * 2)
+        except ChannelPrivateError as e:
+            logging.info('Channel is private or we were banned bc we didnt respond to bot')
+        except UserAlreadyParticipantError as e:
+            logging.info('Already in channel, skipping')
+        except InviteHashInvalidError:
+            logging.info('Failed to join an invalid chat link')
+        except InviteHashEmptyError:
+            logging.info('The invite hash was empty')
+        except ValueError:
+            logging.info('The channel could not be found')
 
     # ==============================
     # Initialize keywords to monitor
@@ -320,7 +353,6 @@ class TGInformer:
                     channel_id = int(str(abs(channel_id))[3:])
                 # Lets add it to the current list of channels we're in
                 current_channels.append(channel_id)
-                self.channel_list.append(channel_id)
                 logging.info('id: {} name: {}'.format(dialog.id, dialog.name))
                 # Is it in the DB?
                 self.session = self.Session()
