@@ -22,7 +22,7 @@ from telethon.tl.functions.messages import ImportChatInviteRequest, ExportChatIn
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-"""
+r"""
     --------------------------------------------------
         ____      ____                              
        /  _/___  / __/___  _________ ___  ___  _____
@@ -59,7 +59,7 @@ class TGInformer:
         # --------------
         # Display banner
         # --------------
-        print("""
+        print(r"""
             ____      ____                              
            /  _/___  / __/___  _________ ___  ___  _____
            / // __ \/ /_/ __ \/ ___/ __ `__ \/ _ \/ ___/
@@ -291,6 +291,7 @@ class TGInformer:
     async def init_monitor_channels(self):
 
         # Let's start listening
+        # pylint: disable=unused-variable
         @self.client.on(events.NewMessage)
         async def message_event_handler(event):
             await self.filter_message(event)
@@ -488,7 +489,7 @@ class TGInformer:
             else:
                 await self.send_notification(message_obj=event.message, event=event, sender_id=event.message.sender_id, channel_id=channel_id)
         
-    event.message.mark_read()
+        event.message.mark_read()
 
     # ====================
     # Handle notifications
