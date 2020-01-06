@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, Table
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, Table, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -102,7 +102,7 @@ class Message(Base):
     account_id = Column(Integer, ForeignKey('account.account_id'), nullable=False)  # The account ID (bot)
     channel_id = Column(Integer, ForeignKey('channel.channel_id'), nullable=False)
     keyword_id = Column(Integer, ForeignKey('keyword.keyword_id'), nullable=False)
-    message_text = Column(String(10000), default=None)
+    message_text = Column(Text, default=None)
     message_is_mention = Column(Boolean(), default=None)
     message_is_scheduled = Column(Boolean(), default=None)
     message_is_fwd = Column(Boolean(), default=None)

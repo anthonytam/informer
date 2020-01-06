@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError, InterfaceError, ProgrammingError
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon import TelegramClient, events
 from telethon.tl.types import PeerUser, PeerChat, PeerChannel
-from telethon.errors.rpcerrorlist import FloodWaitError, ChannelPrivateError,UserAlreadyParticipantError, ChatAdminRequiredError
+from telethon.errors.rpcerrorlist import FloodWaitError, ChannelPrivateError, UserAlreadyParticipantError, ChatAdminRequiredError, InviteHashInvalidError, InviteHashEmptyError
 from telethon.tl.functions.channels import  JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest, ExportChatInviteRequest
 import gspread
@@ -226,23 +226,27 @@ class TGInformer:
     # Check for invite links in the channel
     # =====================================
     async def check_for_channels(self, message_text, forward_from):
-        urls = re.findall(r"https:\/\/t.me\/joinchat\/[a-zA-z0-9]+", message_text)
-        for url in urls:
+        private_channels = re.findall(r"https:\/\/t.me\/joinchat\/([a-zA-z0-9]|.*)+", message_text)
+        for url in private_channels:
             if len(self.channel_list) != 500:
                 logging.info("{}: Attempting to join private channel: {}".format(sys._getframe().f_code.co_name, url))
                 await self.join_private_channel(url)
             else:
                 # TODO: handle adding multiple accounts
                 pass
-        urls = re.findall(r"https:\/\/t.me\/([a-zA-z0-9]|.*)+", message_text)
-        for url in urls:
+        groups = re.findall(r"https:\/\/t.me\/([a-zA-z0-9]|.*)+", message_text)
+        for url in groups:
+            if url in private_channels:
+                continue
             if len(self.channel_list) != 500:
                 logging.info("{}: Attempting to join group: {}".format(sys._getframe().f_code.co_name, url))
                 await self.join_group(url)
             else:
                 # TODO: handle adding multiple accounts
                 pass
-        logging.info(forward_from)
+        if forward_from:
+            logging.info("{}: Attempting to join group from forward: {}".format(sys._getframe().f_code.co_name, forward_from.channel_id))
+            await self.join_group(forward_from.channel_id)
     
     async def join_group(self, url):
         try:
@@ -255,6 +259,10 @@ class TGInformer:
             await asyncio.sleep(e.seconds * 2)
         except ChannelPrivateError as e:
             logging.info('Channel is private or we were banned bc we didnt respond to bot')
+        except InviteHashInvalidError:
+            logging.info('Failed to join an invalid chat link')
+        except InviteHashEmptyError:
+            logging.info('The invite hash was empty')
 
     async def join_private_channel(self, url):
         channel_hash = url.replace('https://t.me/joinchat/', '')
@@ -270,6 +278,10 @@ class TGInformer:
             logging.info('Channel is private or we were banned bc we didnt respond to bot')
         except UserAlreadyParticipantError as e:
             logging.info('Already in channel, skipping')
+        except InviteHashInvalidError:
+            logging.info('Failed to join an invalid chat link')
+        except InviteHashEmptyError:
+            logging.info('The invite hash was empty')
 
     # ==============================
     # Initialize keywords to monitor
@@ -485,16 +497,16 @@ class TGInformer:
                     if re.search(keyword['regex'], message, re.IGNORECASE):
                         logging.info(
                             'Filtering: {}\n\nEvent raw text: {} \n\n Data: {}'.format(channel_id, event.raw_text, event))
-                        await self.send_notification(message_obj=event.message, event=event, sender_id=event.sender_id, channel_id=channel_id, keyword=keyword['name'], keyword_id=keyword['id'])
+                        await self.send_notification(message_obj=event.message, event=event, sender_id=event.message.sender_id, channel_id=channel_id, keyword=keyword['name'], keyword_id=keyword['id'])
             else:
                 await self.send_notification(message_obj=event.message, event=event, sender_id=event.message.sender_id, channel_id=channel_id)
         
-        event.message.mark_read()
+        await event.message.mark_read()
 
     # ====================
     # Handle notifications
     # ====================
-    async def send_notification(self, sender_id=None, event=None, channel_id=None, keyword=None, keyword_id=None, message_obj=None):
+    async def send_notification(self, sender_id=None, event=None, channel_id=None, keyword=None, keyword_id=1, message_obj=None):
         message_text = message_obj.message
 
         # Lets set the meta data
@@ -565,10 +577,10 @@ class TGInformer:
             o = await self.get_user_by_id(sender_id)
 
             self.session = self.Session()
-            if not bool(self.session.query(ChatUser).filter_by(chat_user_id=sender_id).all()):
-
+            if not bool(self.session.query(ChatUser).filter_by(chat_user_id=sender_id if o['is_valid_user'] else -1).all()):
+                logging.info("Message user already in DB.")
                 self.session.add(ChatUser(
-                    chat_user_id=sender_id if o['is_valid_user'] else 1,
+                    chat_user_id=sender_id if o['is_valid_user'] else -1,
                     chat_user_is_bot=o['is_bot'],
                     chat_user_is_verified=o['is_verified'],
                     chat_user_is_restricted=o['is_restricted'],
@@ -582,7 +594,7 @@ class TGInformer:
 
             # Add message
             msg = Message(
-                chat_user_id=sender_id if o['is_valid_user'] else 1,
+                chat_user_id=sender_id if o['is_valid_user'] else -1,
                 account_id=self.account.account_id,
                 channel_id=channel_id,
                 keyword_id=keyword_id,
@@ -599,6 +611,7 @@ class TGInformer:
                 message_tcreate=datetime.now()
             )
             self.session.add(msg)
+            self.session.flush()
 
             message_id = msg.message_id
 
@@ -607,7 +620,7 @@ class TGInformer:
                 message_id=message_id,
                 channel_id=channel_id,
                 account_id=self.account.account_id,
-                chat_user_id=sender_id if o['is_valid_user'] else 1
+                chat_user_id=sender_id if o['is_valid_user'] else -1
             ))
 
             # -----------
@@ -615,8 +628,8 @@ class TGInformer:
             # -----------
             try:
                 self.session.commit()
-            except IntegrityError:
-                pass
+            except IntegrityError as integ_err:
+                logging.error("{}: An IntegrityError has been encountered.\n{}".format(sys._getframe().f_code.co_name, str(integ_err)))
             self.session.close()
 
         # TODO: Add json and Elastic search outputs
