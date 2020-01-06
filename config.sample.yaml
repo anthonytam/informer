@@ -14,6 +14,8 @@ config:
       id: 1234567
       url: "https://t.me/joinchat/1234567"
       is_private: True
+  crawling:
+    enabled: true
   database:
     sql:
       database: "informer"
@@ -32,6 +34,8 @@ config:
       credentials_path: "credentials/gcloud_api.json"
       sheet_name: "Informer Notifications"
     sql:
+      enabled: false
+    json:
       enabled: false
     elastic_search:
       enabled: false

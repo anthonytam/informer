@@ -158,17 +158,14 @@ def initialize_db(config):
     engine = db.create_engine(MYSQL_CONNECTOR_STRING)#, echo=True)
     Session = sessionmaker(bind=engine)
     session = Session()
-    session.execute("CREATE DATABASE {} CHARACTER SET 'utf8' COLLATE 'utf8_unicode_ci';".format(config["database"]["sql"]["database"]))
+    # Character set is to suppoer emojis. This requires additional MariaDB configuration.
+    session.execute("CREATE DATABASE IF NOT EXISTS {} CHARACTER SET 'utf8mb4' COLLATE 'utf8mb4_unicode_ci';".format(config["database"]["sql"]["database"]))
     session.close()
-    engine = db.create_engine('{}/{}?charset=utf8mb4'.format(MYSQL_CONNECTOR_STRING, config["database"]["sql"]["database"]))
+    engine = db.create_engine('{}/{}'.format(MYSQL_CONNECTOR_STRING, config["database"]["sql"]["database"])) # ?charset=utf8mb4
     Session = sessionmaker(bind=engine)
     session = None
     session = Session()
-
-    # A hack to support unicode for emojis
     session.execute('SET NAMES "utf8mb4" COLLATE "utf8mb4_unicode_ci"')
-    session.execute('ALTER TABLE {} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin'.format(config["database"]["sql"]["database"]))
-    session.execute('commit')
 
     init_db()
     init_data()
