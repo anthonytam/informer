@@ -2,6 +2,7 @@ from models import Account, Channel, ChatUser, Keyword, Message, Notification
 import sqlalchemy as db
 from datetime import datetime, timedelta
 from random import randrange
+from enum import Enum
 import build_database
 import sys
 import os
@@ -10,12 +11,14 @@ import json
 import re
 import asyncio
 import time
+import math
 from telethon import utils
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError, InterfaceError, ProgrammingError
 from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.functions.messages import GetHistoryRequest
 from telethon import TelegramClient, events
-from telethon.tl.types import PeerUser, PeerChat, PeerChannel
+from telethon.tl.types import PeerUser, PeerChat, PeerChannel, Message as TL_Message
 from telethon.errors.rpcerrorlist import FloodWaitError, ChannelPrivateError, UserAlreadyParticipantError, ChatAdminRequiredError, InviteHashInvalidError, InviteHashEmptyError
 from telethon.tl.functions.channels import  JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest, ExportChatInviteRequest
@@ -39,6 +42,9 @@ r"""
 # Lets set the logging level
 logging.getLogger().setLevel(logging.INFO)
 
+class JoinTypes(Enum):
+    GROUP = 1
+    PRIVATE = 2
 
 class TGInformer:
 
@@ -203,7 +209,6 @@ class TGInformer:
             return False
         except FloodWaitError as e:
             logging.info('{}: Got a flood wait error for: {}'.format(sys._getframe().f_code.co_name, url))
-            # TODO: Doesn't this crash?
             await asyncio.sleep(e.seconds * 2)
 
         return {
@@ -218,12 +223,9 @@ class TGInformer:
     # Get user info by ID
     # ===================
     async def get_user_by_id(self, user_id=None):
-        try:
+        if user_id > 0:
             u = await self.client.get_input_entity(PeerUser(user_id=user_id))
             user = await self.client(GetFullUserRequest(u))
-
-            logging.info('{}: User ID {} has data:\n {}\n\n'.format(sys._getframe().f_code.co_name, user_id, user))
-
             return {
                 'username': user.user.username,
                 'first_name': user.user.first_name,
@@ -232,72 +234,53 @@ class TGInformer:
                 'is_bot': user.user.bot,
                 'is_restricted': user.user.restricted,
                 'phone': user.user.phone,
-                'is_valid_user': True
             }
-        except TypeError:
-            logging.info("{}: Message was not sent by a user... giving a null user".format(sys._getframe().f_code.co_name))
+        else:
+            data = await self.client.get_entity(PeerChannel(user_id))
             return {
-                'username': "Channel",
+                'username': data.title,
                 'first_name': "Channel",
                 'last_name': "User",
                 'is_verified': False,
                 'is_bot': False,
                 'is_restricted': False,
                 'phone': None,
-                'is_valid_user': False
             }
 
     # =====================================
-    # Check for invite links in the channel
+    # Check for invite links in the messgae
     # =====================================
-    async def check_for_channels(self, message_text, forward_from):
-        private_channels = re.findall(r"https:\/\/t.me\/joinchat\/.+", message_text)
+    async def check_for_channels(self, message_raw):
+        private_channels = re.findall(r"https:\/\/t.me\/joinchat\/.+", message_raw)
         for url in private_channels:
-            if len(self.channel_list) != 500:
-                logging.info("{}: Attempting to join private channel: {}".format(sys._getframe().f_code.co_name, url))
-                await self.join_private_channel(url)
-            else:
-                # TODO: handle adding multiple accounts
-                pass
-        groups = re.findall(r"https:\/\/t.me\/.+", message_text)
-        for url in groups:
             if url in private_channels:
                 continue
             if len(self.channel_list) != 500:
-                logging.info("{}: Attempting to join group: {}".format(sys._getframe().f_code.co_name, url))
-                await self.join_group(url)
+                logging.info("{}: Attempting to join private channel: {}".format(sys._getframe().f_code.co_name, url))
+                await self.join_channel(JoinTypes.PRIVATE, url)
             else:
                 # TODO: handle adding multiple accounts
                 pass
-        # if forward_from:
-        #     logging.info("{}: Attempting to join group from forward: {}".format(sys._getframe().f_code.co_name, forward_from.channel_id))
-        #     await self.join_group(forward_from.channel_id)
+        groups = re.findall(r"https:\/\/t.me\/.+", message_raw)
+        for url in groups:
+            if url in private_channels or url in groups:
+                continue
+            if len(self.channel_list) != 500:
+                logging.info("{}: Attempting to join group: {}".format(sys._getframe().f_code.co_name, url))
+                await self.join_channel(JoinTypes.GROUP, url)
+            else:
+                # TODO: handle adding multiple accounts
+                pass
     
-    async def join_group(self, url):
+    async def join_channel(self, join_type, url):
         try:
-            result = await self.client(JoinChannelRequest(channel=await self.client.get_entity(url)))
-            self._add_channel_to_database(result.chats[0], url)
-            sec = randrange(self.MIN_CHANNEL_JOIN_WAIT, self.MAX_CHANNEL_JOIN_WAIT)
-            logging.info('sleeping for {} seconds'.format(sec))
-            await asyncio.sleep(sec)
-        except FloodWaitError as e:
-            logging.info('Received FloodWaitError, waiting for {} seconds..'.format(e.seconds))
-            await asyncio.sleep(e.seconds * 2)
-        except ChannelPrivateError as e:
-            logging.info('Channel is private or we were banned bc we didnt respond to bot')
-        except UserAlreadyParticipantError as e:
-            logging.info('Already in channel, skipping')
-        except InviteHashInvalidError:
-            logging.info('Failed to join an invalid chat link')
-        except InviteHashEmptyError:
-            logging.info('The invite hash was empty')
-        except ValueError:
-            logging.info('The channel could not be found')
-
-    async def join_private_channel(self, url):
-        channel_hash = url.replace('https://t.me/joinchat/', '')
-        try:
-            result = await self.client(ImportChatInviteRequest(hash=channel_hash))
+            url = url.split(" ")[0]
+            result = None
+            if join_type == JoinTypes.GROUP:
+                result = await self.client(JoinChannelRequest(channel=await self.client.get_entity(url)))
+            elif join_type == JoinTypes.PRIVATE:
+                channel_hash = url.replace('https://t.me/joinchat/', '')
+                result = await self.client(ImportChatInviteRequest(hash=channel_hash))
             self._add_channel_to_database(result.chats[0], url)
             sec = randrange(self.MIN_CHANNEL_JOIN_WAIT, self.MAX_CHANNEL_JOIN_WAIT)
             logging.info('sleeping for {} seconds'.format(sec))
@@ -379,7 +362,19 @@ class TGInformer:
                         self.session.rollback()
                     except InterfaceError:
                         pass
-                self.session.close()
+                    self.session.close()
+
+                    count = 1
+                    async for message in self.client.iter_messages(dialog.entity, limit=100):
+                        if isinstance(message, TL_Message):
+                            await self.send_notification(message_obj=message, sender_id=message.sender_id, channel_id=channel_id)
+                            logging.info("{}: New message number {}".format(sys._getframe().f_code.co_name, count))
+                            count = count + 1
+                        else:
+                            logging.info("{}: Not a message. {}".format(sys._getframe().f_code.co_name, type(message)))
+                        await asyncio.sleep(2)
+                else:
+                    self.session.close()
 
         logging.info('{}: ### Current channels {}'.format(sys._getframe().f_code.co_name, json.dumps(current_channels)))
 
@@ -454,7 +449,6 @@ class TGInformer:
                 }
 
             channel_is_private = True if (channel['channel_is_private'] or (channel['channel_url'] and '/joinchat/' in channel['channel_url'])) else False
-            # TODO: Make this a function
             # Join if public channel and we're not in it
             if channel['channel_is_group'] is False and channel_is_private is False and channel['channel_id'] not in current_channels:
                 logging.info('{}: Joining channel: {} => {}'.format(sys._getframe().f_code.co_name, channel['channel_id'], channel['channel_name']))
@@ -529,16 +523,16 @@ class TGInformer:
                     if re.search(keyword['regex'], message, re.IGNORECASE):
                         logging.info(
                             'Filtering: {}\n\nEvent raw text: {} \n\n Data: {}'.format(channel_id, event.raw_text, event))
-                        await self.send_notification(message_obj=event.message, event=event, sender_id=event.message.sender_id, channel_id=channel_id, keyword=keyword['name'], keyword_id=keyword['id'])
+                        await self.send_notification(message_obj=event.message, sender_id=event.message.sender_id, channel_id=channel_id, keyword=keyword['name'], keyword_id=keyword['id'])
             else:
-                await self.send_notification(message_obj=event.message, event=event, sender_id=event.message.sender_id, channel_id=channel_id)
+                await self.send_notification(message_obj=event.message, sender_id=event.message.sender_id, channel_id=channel_id)
         
         await event.message.mark_read()
 
     # ====================
     # Handle notifications
     # ====================
-    async def send_notification(self, sender_id=None, event=None, channel_id=None, keyword=None, keyword_id=1, message_obj=None):
+    async def send_notification(self, sender_id=None, channel_id=None, keyword=None, keyword_id=1, message_obj=None):
         message_text = message_obj.message
 
         # Lets set the meta data
@@ -549,7 +543,7 @@ class TGInformer:
         is_bot = False if message_obj.via_bot_id is None else True
 
         if self.should_crawl:
-            await self.check_for_channels(message_text, message_obj.fwd_from)
+            await self.check_for_channels(str(message_obj))
 
         if isinstance(message_obj.to_id, PeerChannel):
             is_channel = True
@@ -565,15 +559,15 @@ class TGInformer:
             is_private = False
 
         # We track the channel size and set it to expire after sometime, if it does we update the participant size
-        if channel_id in self.channel_meta and self.channel_meta[channel_id]['channel_size'] == 0 or datetime.now() > self.channel_meta[channel_id]['channel_texpire']:
-            logging.info('refreshing the channel information')
-            channel_size = await self.get_channel_user_count(channel_id)
-        else:
-            channel_size = self.channel_meta[channel_id]['channel_size']
+        # if channel_id in self.channel_meta and self.channel_meta[channel_id]['channel_size'] == 0 or datetime.now() > self.channel_meta[channel_id]['channel_texpire']:
+        #     channel_size = await self.get_channel_user_count(channel_id)
+        # else:
+        #     channel_size = self.channel_meta[channel_id]['channel_size']
+        # TODO: Properly get the number of participants
+        channel_size = await self.get_channel_user_count(channel_id)
 
         # Lets get who sent the message
-        sender = await event.get_sender()
-        sender_username = sender.username
+        sender_username = message_obj.post_author
 
         channel_id = abs(channel_id)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -609,10 +603,11 @@ class TGInformer:
             o = await self.get_user_by_id(sender_id)
 
             self.session = self.Session()
-            if not bool(self.session.query(ChatUser).filter_by(chat_user_id=sender_id if o['is_valid_user'] else -1).all()):
-                logging.info("Message user already in DB.")
+            if not bool(self.session.query(ChatUser).filter_by(chat_user_id=sender_id).all()):
+                logging.info("Message user not in DB.")
                 self.session.add(ChatUser(
-                    chat_user_id=sender_id if o['is_valid_user'] else -1,
+                    chat_user_id=sender_id,
+                    chat_user_is_channel=False if sender_id > 0 else True,
                     chat_user_is_bot=o['is_bot'],
                     chat_user_is_verified=o['is_verified'],
                     chat_user_is_restricted=o['is_restricted'],
@@ -623,10 +618,11 @@ class TGInformer:
                     chat_user_tlogin=datetime.now(),
                     chat_user_tmodified=datetime.now()
                 ))
+                self.session.flush()
 
             # Add message
             msg = Message(
-                chat_user_id=sender_id if o['is_valid_user'] else -1,
+                chat_user_id=sender_id,
                 account_id=self.account.account_id,
                 channel_id=channel_id,
                 keyword_id=keyword_id,
@@ -652,7 +648,7 @@ class TGInformer:
                 message_id=message_id,
                 channel_id=channel_id,
                 account_id=self.account.account_id,
-                chat_user_id=sender_id if o['is_valid_user'] else -1
+                chat_user_id=sender_id
             ))
 
             # -----------

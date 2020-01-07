@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, Table, Text
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, Table, Text, BigInteger
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -62,7 +62,8 @@ class ChatUser(Base):
     """
     __tablename__ = 'chat_user'
     id = Column(Integer, primary_key=True, index=True)
-    chat_user_id = Column(Integer, unique=True, index=True, nullable=False)
+    chat_user_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    chat_user_is_channel = Column(Boolean(), default=None)
     chat_user_is_bot = Column(Boolean(), default=None)
     chat_user_is_verified = Column(Boolean(), default=None)
     chat_user_is_restricted = Column(Boolean(), default=None)
@@ -98,7 +99,7 @@ class Message(Base):
     """
     __tablename__ = 'message'
     message_id = Column(Integer, primary_key=True, index=True)
-    chat_user_id = Column(Integer, ForeignKey('chat_user.chat_user_id'), nullable=False)
+    chat_user_id = Column(BigInteger, ForeignKey('chat_user.chat_user_id'), nullable=False)
     account_id = Column(Integer, ForeignKey('account.account_id'), nullable=False)  # The account ID (bot)
     channel_id = Column(Integer, ForeignKey('channel.channel_id'), nullable=False)
     keyword_id = Column(Integer, ForeignKey('keyword.keyword_id'), nullable=False)
@@ -129,7 +130,7 @@ class Notification(Base):
     message_id = Column(Integer, ForeignKey('message.message_id'), nullable=False)
     channel_id = Column(Integer, ForeignKey('channel.channel_id'), nullable=False)
     account_id = Column(Integer, ForeignKey('account.account_id'), nullable=False)  # The account ID (bot)
-    chat_user_id = Column(Integer, ForeignKey('chat_user.chat_user_id'), nullable=False)
+    chat_user_id = Column(BigInteger, ForeignKey('chat_user.chat_user_id'), nullable=False)
     notification_tnotify = Column(DateTime, default=datetime.now())
 
     keyword = relationship('Keyword')

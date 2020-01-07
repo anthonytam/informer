@@ -110,6 +110,17 @@ def init_add_channels():
             channel_is_private=channel_is_private
         ))
 
+    # session.add(ChatUser(
+    #     chat_user_id = -1,
+    #     chat_user_is_bot = 0,
+    #     chat_user_is_verified = 0,
+    #     chat_user_is_restricted = 0,
+    #     chat_user_first_name = "Channel",
+    #     chat_user_last_name = "User", 
+    #     chat_user_name = "Channel",
+    #     chat_user_phone = 0
+    # ))
+
     session.commit()
 
 # ==============================
@@ -119,6 +130,9 @@ def init_add_keywords():
     global session, engine
 
     KEYWORDS = []
+    KEYWORDS.append({
+                    'keyword_description': "NULL",
+                    'keyword_regex': "NULL"})
 
     # Lets import the CSV with the keywork list
     with open('initial/keywords.csv') as csv_file:
