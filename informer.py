@@ -156,6 +156,13 @@ class TGInformer:
         except InterfaceError:
             pass
         self.session.close()
+        self.channel_list.append(channel.id)
+        self.channel_meta[channel.id] = {
+                    'channel_id': channel.id,
+                    'channel_title': channel.title,
+                    'channel_url': url,
+                    'channel_size': 0,
+                    'channel_texpire': datetime.now() + timedelta(hours=3)}
 
     # =============
     # Get all users
