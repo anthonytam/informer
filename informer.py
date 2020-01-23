@@ -2,7 +2,6 @@ from models import Account, Channel, ChatUser, Keyword, Message, Notification
 import sqlalchemy as db
 from datetime import datetime, timedelta
 from random import randrange
-from enum import Enum
 import build_database
 import sys
 import os
@@ -11,8 +10,13 @@ import json
 import re
 import asyncio
 import time
+import threading
 import math
+from background_scraper import BackgroundScraper
+from queue import Queue
+from join_types import JoinTypes
 from telethon import utils
+from urlextract import URLExtract
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError, InterfaceError, ProgrammingError
 from telethon.tl.functions.users import GetFullUserRequest
@@ -37,24 +41,29 @@ r"""
     by @paulpierre 11-26-2019
     https://github.com/paulpierre/informer
 """
-
-
-# Lets set the logging level
-logging.getLogger().setLevel(logging.INFO)
-
-class JoinTypes(Enum):
-    GROUP = 1
-    PRIVATE = 2
-
 class TGInformer:
 
     def __init__(self, account_id, config):
+        # Setup Logging
+        self.logger = logging.getLogger(account_id)
+        self.logger.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_logger = logging.FileHandler("logs/{}.log".format(account_id))
+        file_logger.setLevel(logging.INFO)
+        file_logger.setFormatter(formatter)
+        self.logger.addHandler(file_logger)
+        console_logger = logging.StreamHandler()
+        console_logger.setLevel(logging.INFO)
+        console_logger.setFormatter(formatter)
+        self.logger.addHandler(console_logger)
         # ------------------
         # Instance variables
         # ------------------
         self.keyword_list = []
         self.channel_list = []
         self.channel_meta = {}
+        self.channels_to_join = Queue()
+        self.channels_to_scrape = Queue()
         self.bot_task = None
         self.KEYWORD_REFRESH_WAIT = 15 * 60
         self.MIN_CHANNEL_JOIN_WAIT = 30
@@ -76,12 +85,12 @@ class TGInformer:
         """)
 
         # Initialize database
-        self.MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://{}:{}@{}:{}/{}'.format(config["database"]["sql"]["username"],
-                                                                                     config["database"]["sql"]["password"],
-                                                                                     config["database"]["sql"]["hostname"],
-                                                                                     config["database"]["sql"]["port"],
-                                                                                     config["database"]["sql"]["database"])
-        self.engine = db.create_engine(self.MYSQL_CONNECTOR_STRING)
+        MYSQL_CONNECTOR_STRING = 'mysql+mysqlconnector://{}:{}@{}:{}/{}'.format(config["database"]["sql"]["username"],
+                                                                                config["database"]["sql"]["password"],
+                                                                                config["database"]["sql"]["hostname"],
+                                                                                config["database"]["sql"]["port"],
+                                                                                config["database"]["sql"]["database"])
+        self.engine = db.create_engine(MYSQL_CONNECTOR_STRING)
         self.Session = sessionmaker(bind=self.engine)
         self.session = self.Session()
 
@@ -117,6 +126,9 @@ class TGInformer:
         # Set the channel we want to send alerts to
         self.monitor_channel = config["notification"]["telegram"]["channel_id"]
 
+        # Create the background scraper thread
+        self.background_scraper_thread = threading.Thread(target=BackgroundScraper.make_scraper, args=(MYSQL_CONNECTOR_STRING, self))
+
         # Telegram service login
         logging.info('Logging in with account # {}'.format(self.account.account_phone))
         session_file = 'session/' + self.account.account_phone.replace('+', '')
@@ -131,6 +143,7 @@ class TGInformer:
             logging.info('Client is currently not logged in, please sign in!')
             await self.client.send_code_request(self.account.account_phone)
             self.tg_user = await self.client.sign_in(self.account.account_phone, input('Enter code: '))
+        self.background_scraper_thread.start()
 
     def _add_channel_to_database(self, channel, url):
         self.session = self.Session()
@@ -164,18 +177,6 @@ class TGInformer:
                     'channel_size': 0,
                     'channel_texpire': datetime.now() + timedelta(hours=3)}
 
-    # =============
-    # Get all users
-    # =============
-    def get_channel_all_users(self, channel_id):
-        # TODO: this function is not complete
-        channel = self.client.get_entity(PeerChat(channel_id))
-        users = self.client.get_participants(channel)
-        print('total users: {}'.format(users.total))
-        for user in users:
-            if user.username is not None and not user.is_self:
-                print(utils.get_display_name(user), user.username, user.id, user.bot, user.verified, user.restricted, user.first_name, user.last_name, user.phone, user.is_self)
-
     # =====================
     # Get # of participants
     # =====================
@@ -185,7 +186,7 @@ class TGInformer:
             users = await self.client.get_participants(data)
             return users.total
         except ChatAdminRequiredError:
-            return 0
+            return -1
 
     # =======================
     # Get channel by group ID
@@ -258,27 +259,23 @@ class TGInformer:
     # Check for invite links in the messgae
     # =====================================
     async def check_for_channels(self, message_raw):
-        private_channels = re.findall(r"https:\/\/t.me\/joinchat\/.+", message_raw)
-        for url in private_channels:
-            if url in private_channels:
-                continue
-            if len(self.channel_list) != 500:
-                logging.info("{}: Attempting to join private channel: {}".format(sys._getframe().f_code.co_name, url))
-                await self.join_channel(JoinTypes.PRIVATE, url)
+        potential_urls = URLExtract().find_urls(message_raw, True)
+        for url in potential_urls:
+            if "t.me" in url:
+                # TODO: Check for the join URL in the database
+                if len(self.channel_list) < 500:
+                    if "joinchat" in url:
+                        self.logger.info("{}: Attempting to join private channel: {}".format(sys._getframe().f_code.co_name, url))
+                        await self.join_channel(JoinTypes.PRIVATE, url)
+                    else:
+                        self.logger.info("{}: Attempting to join group: {}".format(sys._getframe().f_code.co_name, url))
+                        await self.join_channel(JoinTypes.GROUP, url)
+                else:
+                    # TODO: handle adding multiple accounts
+                    pass
             else:
-                # TODO: handle adding multiple accounts
-                pass
-        groups = re.findall(r"https:\/\/t.me\/.+", message_raw)
-        for url in groups:
-            if url in private_channels or url in groups:
-                continue
-            if len(self.channel_list) != 500:
-                logging.info("{}: Attempting to join group: {}".format(sys._getframe().f_code.co_name, url))
-                await self.join_channel(JoinTypes.GROUP, url)
-            else:
-                # TODO: handle adding multiple accounts
-                pass
-    
+                self.logger.info("{}: Found a url. {}".format(sys._getframe().f_code.co_name, url))
+
     async def join_channel(self, join_type, url):
         try:
             url = url.split(" ")[0]
@@ -335,12 +332,13 @@ class TGInformer:
         current_channels = []
         # Lets iterate through all the open chat channels we have
         async for dialog in self.client.iter_dialogs():
+            self.logger.info("Scanning a chnannel")
             channel_id = dialog.id
             # As long as it is not a chat with ourselves
             if not dialog.is_user:
                 # Certain channels have a prefix of 100, lets remove that
-                if str(abs(channel_id))[:3] == '100':
-                    channel_id = int(str(abs(channel_id))[3:])
+                #if str(abs(channel_id))[:3] == '100':
+                #    channel_id = int(str(abs(channel_id))[3:])
                 # Lets add it to the current list of channels we're in
                 current_channels.append(channel_id)
                 logging.info('id: {} name: {}'.format(dialog.id, dialog.name))
@@ -371,15 +369,8 @@ class TGInformer:
                         pass
                     self.session.close()
 
-                    count = 1
-                    async for message in self.client.iter_messages(dialog.entity, limit=100):
-                        if isinstance(message, TL_Message):
-                            await self.send_notification(message_obj=message, sender_id=message.sender_id, channel_id=channel_id)
-                            logging.info("{}: New message number {}".format(sys._getframe().f_code.co_name, count))
-                            count = count + 1
-                        else:
-                            logging.info("{}: Not a message. {}".format(sys._getframe().f_code.co_name, type(message)))
-                        await asyncio.sleep(2)
+                    self.channels_to_scrape.put((datetime.now(), channel_id, dialog))
+
                 else:
                     self.session.close()
 
@@ -517,6 +508,7 @@ class TGInformer:
             channel_id = event.message.chat_id
         else:
             # Message comes neither from a channel or chat, lets skip
+            logging.info(event.raw_text)
             return
 
         # Channel values from the API are signed ints, lets get ABS for consistency
@@ -525,7 +517,7 @@ class TGInformer:
         message = event.raw_text
 
         if channel_id in self.channel_list:
-            if len(self.keyword_list) != 0:
+            if len(self.keyword_list) > 1:
                 for keyword in self.keyword_list:
                     if re.search(keyword['regex'], message, re.IGNORECASE):
                         logging.info(
@@ -576,7 +568,7 @@ class TGInformer:
         # Lets get who sent the message
         sender_username = message_obj.post_author
 
-        channel_id = abs(channel_id)
+        channel_id = channel_id
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if self.telegram_enabled:

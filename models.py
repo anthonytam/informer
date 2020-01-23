@@ -36,7 +36,7 @@ class Channel(Base):
     """
     __tablename__ = 'channel'
     id = Column(Integer, primary_key=True, index=True)
-    channel_id = Column(Integer, unique=True, index=True, nullable=True) # The URL can come first but the channel ID populated later
+    channel_id = Column(BigInteger, unique=True, index=True, nullable=True) # The URL can come first but the channel ID populated later
     channel_name = Column(String(256), default=None, nullable=True)
     channel_title = Column(String(256), default=None, nullable=True)
     channel_url = Column(String(256), nullable=True)
@@ -101,8 +101,7 @@ class Message(Base):
     message_id = Column(Integer, primary_key=True, index=True)
     chat_user_id = Column(BigInteger, ForeignKey('chat_user.chat_user_id'), nullable=False)
     account_id = Column(Integer, ForeignKey('account.account_id'), nullable=False)  # The account ID (bot)
-    channel_id = Column(Integer, ForeignKey('channel.channel_id'), nullable=False)
-    keyword_id = Column(Integer, ForeignKey('keyword.keyword_id'), nullable=False)
+    channel_id = Column(BigInteger, ForeignKey('channel.channel_id'), nullable=False)
     message_text = Column(Text, default=None)
     message_is_mention = Column(Boolean(), default=None)
     message_is_scheduled = Column(Boolean(), default=None)
@@ -128,7 +127,7 @@ class Notification(Base):
     id = Column(Integer, primary_key=True, index=True)
     keyword_id = Column(Integer, ForeignKey('keyword.keyword_id'), nullable=False)
     message_id = Column(Integer, ForeignKey('message.message_id'), nullable=False)
-    channel_id = Column(Integer, ForeignKey('channel.channel_id'), nullable=False)
+    channel_id = Column(BigInteger, ForeignKey('channel.channel_id'), nullable=False)
     account_id = Column(Integer, ForeignKey('account.account_id'), nullable=False)  # The account ID (bot)
     chat_user_id = Column(BigInteger, ForeignKey('chat_user.chat_user_id'), nullable=False)
     notification_tnotify = Column(DateTime, default=datetime.now())
