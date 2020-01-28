@@ -1,0 +1,9 @@
+__pycache__
+.vscode
+venv-dev
+venv
+
+session/*.session
+session/*.session-journal
+logs/*.log
+config.yaml

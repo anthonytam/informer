@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, Table
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, Table, Text, BigInteger
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -36,7 +36,7 @@ class Channel(Base):
     """
     __tablename__ = 'channel'
     id = Column(Integer, primary_key=True, index=True)
-    channel_id = Column(Integer, unique=True, index=True, nullable=True) # The URL can come first but the channel ID populated later
+    channel_id = Column(BigInteger, unique=True, index=True, nullable=True) # The URL can come first but the channel ID populated later
     channel_name = Column(String(256), default=None, nullable=True)
     channel_title = Column(String(256), default=None, nullable=True)
     channel_url = Column(String(256), nullable=True)
@@ -62,7 +62,8 @@ class ChatUser(Base):
     """
     __tablename__ = 'chat_user'
     id = Column(Integer, primary_key=True, index=True)
-    chat_user_id = Column(Integer, unique=True, index=True, nullable=False)
+    chat_user_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    chat_user_is_channel = Column(Boolean(), default=None)
     chat_user_is_bot = Column(Boolean(), default=None)
     chat_user_is_verified = Column(Boolean(), default=None)
     chat_user_is_restricted = Column(Boolean(), default=None)
@@ -98,11 +99,10 @@ class Message(Base):
     """
     __tablename__ = 'message'
     message_id = Column(Integer, primary_key=True, index=True)
-    chat_user_id = Column(Integer, ForeignKey('chat_user.chat_user_id'), nullable=False)
+    chat_user_id = Column(BigInteger, ForeignKey('chat_user.chat_user_id'), nullable=False)
     account_id = Column(Integer, ForeignKey('account.account_id'), nullable=False)  # The account ID (bot)
-    channel_id = Column(Integer, ForeignKey('channel.channel_id'), nullable=False)
-    keyword_id = Column(Integer, ForeignKey('keyword.keyword_id'), nullable=False)
-    message_text = Column(String(10000), default=None)
+    channel_id = Column(BigInteger, ForeignKey('channel.channel_id'), nullable=False)
+    message_text = Column(Text, default=None)
     message_is_mention = Column(Boolean(), default=None)
     message_is_scheduled = Column(Boolean(), default=None)
     message_is_fwd = Column(Boolean(), default=None)
@@ -119,20 +119,6 @@ class Message(Base):
     channel = relationship('Channel', back_populates='messages')
     notifications = relationship('Notification')
 
-
-class Monitor(Base):
-    """
-    Channels to join and monitor
-    """
-    __tablename__ = 'monitor'
-    monitor_id = Column(Integer, primary_key=True, index=True)
-    channel_id = Column(Integer, ForeignKey('channel.id'), nullable=False)
-    account_id = Column(Integer, ForeignKey('account.account_id'), nullable=False)  # The account ID (bot)
-    monitor_tcreate = Column(DateTime, default=datetime.now())
-    monitor_tmodified = Column(DateTime, default=datetime.now())
-    channel = relationship('Channel')
-
-
 class Notification(Base):
     """
     A log of notifications of keywords detected
@@ -141,9 +127,9 @@ class Notification(Base):
     id = Column(Integer, primary_key=True, index=True)
     keyword_id = Column(Integer, ForeignKey('keyword.keyword_id'), nullable=False)
     message_id = Column(Integer, ForeignKey('message.message_id'), nullable=False)
-    channel_id = Column(Integer, ForeignKey('channel.channel_id'), nullable=False)
+    channel_id = Column(BigInteger, ForeignKey('channel.channel_id'), nullable=False)
     account_id = Column(Integer, ForeignKey('account.account_id'), nullable=False)  # The account ID (bot)
-    chat_user_id = Column(Integer, ForeignKey('chat_user.chat_user_id'), nullable=False)
+    chat_user_id = Column(BigInteger, ForeignKey('chat_user.chat_user_id'), nullable=False)
     notification_tnotify = Column(DateTime, default=datetime.now())
 
     keyword = relationship('Keyword')
