@@ -285,6 +285,7 @@ class TGInformer:
             elif join_type == JoinTypes.PRIVATE:
                 channel_hash = url.replace('https://t.me/joinchat/', '')
                 result = await self.client(ImportChatInviteRequest(hash=channel_hash))
+            self.channels_to_scrape.put((datetime.now(), result.chats[0].id))
             self._add_channel_to_database(result.chats[0], url)
             sec = randrange(self.MIN_CHANNEL_JOIN_WAIT, self.MAX_CHANNEL_JOIN_WAIT)
             logging.info('sleeping for {} seconds'.format(sec))
@@ -369,7 +370,7 @@ class TGInformer:
                         pass
                     self.session.close()
 
-                    self.channels_to_scrape.put((datetime.now(), channel_id, dialog))
+                    self.channels_to_scrape.put((datetime.now(), channel_id))
 
                 else:
                     self.session.close()
@@ -516,16 +517,15 @@ class TGInformer:
 
         message = event.raw_text
 
-        if channel_id in self.channel_list:
-            if len(self.keyword_list) > 1:
-                for keyword in self.keyword_list:
-                    if re.search(keyword['regex'], message, re.IGNORECASE):
-                        logging.info(
-                            'Filtering: {}\n\nEvent raw text: {} \n\n Data: {}'.format(channel_id, event.raw_text, event))
-                        await self.send_notification(message_obj=event.message, sender_id=event.message.sender_id, channel_id=channel_id, keyword=keyword['name'], keyword_id=keyword['id'])
-            else:
-                await self.send_notification(message_obj=event.message, sender_id=event.message.sender_id, channel_id=channel_id)
-        
+        if len(self.keyword_list) > 1:
+            for keyword in self.keyword_list:
+                if re.search(keyword['regex'], message, re.IGNORECASE):
+                    logging.info(
+                        'Filtering: {}\n\nEvent raw text: {} \n\n Data: {}'.format(channel_id, event.raw_text, event))
+                    await self.send_notification(message_obj=event.message, sender_id=event.message.sender_id, channel_id=channel_id, keyword=keyword['name'], keyword_id=keyword['id'])
+        else:
+            await self.send_notification(message_obj=event.message, sender_id=event.message.sender_id, channel_id=channel_id)
+    
         await event.message.mark_read()
 
     # ====================
@@ -624,7 +624,6 @@ class TGInformer:
                 chat_user_id=sender_id,
                 account_id=self.account.account_id,
                 channel_id=channel_id,
-                keyword_id=keyword_id,
                 message_text=message_text,
                 message_is_mention=is_mention,
                 message_is_scheduled=is_scheduled,
@@ -680,6 +679,12 @@ class TGInformer:
         while True:
             logging.info('### Running bot interval')
             await self.update_keyword_list()
+
+            # Join channels from the background crawler
+            while not self.channels_to_join.empty():
+                url = self.channels_to_join.get()
+                await self.join_channel(url[0], url[1])
+
             await asyncio.sleep(self.KEYWORD_REFRESH_WAIT)
 
     def stop_bot_interval(self):

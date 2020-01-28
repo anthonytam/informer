@@ -103,7 +103,7 @@ class BackgroundScraper:
     async def scrape_channel(self, log_time, channel_id):
         data = await self.client.get_entity(channel_id)
         count = 1
-        async for message in self.client.iter_messages(data):
+        async for message in self.client.iter_messages(data, limit=150):
             if isinstance(message, TGMessage):
                 await self.log_message(message, message.sender_id, channel_id, log_time)
                 self.logger.info("{}: Logging message number {}".format(sys._getframe().f_code.co_name, count))
