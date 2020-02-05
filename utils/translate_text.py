@@ -1,6 +1,7 @@
 import json
 from models import Message
 import os
+import cld3
 import requests
 import sqlalchemy
 from sqlalchemy.orm import sessionmaker
@@ -34,11 +35,16 @@ session_maker = sessionmaker(bind=engine)
 session = session_maker()
 
 # Fetch all messages in the DB
-character_count = 1274042
-row_count = 0
+character_count = 2228966
 messages = session.query(Message).filter_by(message_translated=None).all()
 for message in messages:
-    row_count += 1
+    if cld3.get_language(message.message_text).language == "en":
+        message.message_translated = response[0]["translations"][0]["text"]
+        message.message_language = response[0]["detectedLanguage"]["language"]
+        print("Message ID {} is already in English.".format(message.message_id))
+        session.commit()
+        continue
+
     request_body = [{
         'text': message.message_text
     }]

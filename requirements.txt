@@ -13,3 +13,4 @@ pyyaml==5.2
 urlextract==0.14.0
 uuid==1.30
 requests==2.22.0
+pycld3==0.19
