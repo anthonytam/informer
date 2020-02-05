@@ -1,4 +1,8 @@
 config:
+  api:
+    azure_translate:
+      key: "1234"
+      endpoint: "https://cognitiveservices.azure.com/"
   initial:
     account:
       id: 1234567
